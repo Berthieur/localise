@@ -108,7 +108,8 @@ function initDatabase() {
         const testData = [
           ['emp-1', 'fun', 'tero', 'employé', 1, Date.now()],
           ['emp-2', 'Rakoto', 'Jean', 'employé', 0, Date.now()],
-          ['emp-3', 'Rasoa', 'Marie', 'manager', 0, Date.now()]
+          ['emp-3', 'Rasoa', 'Marie', 'manager', 0, Date.now()],
+          ['emp-4', 'info', 'Spray', 'employé', 0, Date.now()]
         ];
         testData.forEach(emp => {
           db.run(`INSERT INTO employees (id, nom, prenom, type, is_active, created_at) 
@@ -289,14 +290,16 @@ function calculatePosition(employeeId) {
         return;
       }
       
-      if (!measurements || measurements.length < 3) {
-        console.log(`⚠️  Pas assez de mesures: ${measurements?.length || 0}/3`);
-        if (measurements.length > 0) {
-          // Fallback pour moins de 3 ancres
-          const anchor = measurements[0];
-          const position = { x: anchor.anchor_x, y: anchor.anchor_y };
-          updatePosition(employeeId, position);
-        }
+      if (!measurements || measurements.length === 0) {
+        console.log(`⚠️  Aucune mesure récente pour ${employeeId}`);
+        return;
+      }
+      
+      if (measurements.length < 3) {
+        console.log(`⚠️  Pas assez de mesures: ${measurements.length}/3`);
+        const anchor = measurements[0];
+        const position = { x: anchor.anchor_x, y: anchor.anchor_y };
+        updatePosition(employeeId, position);
         return;
       }
 
@@ -321,23 +324,19 @@ function calculatePosition(employeeId) {
       
       if (anchors.length >= 3) {
         const position = trilateration(anchors);
-        
         console.log(`📍 Position: (${position.x.toFixed(2)}, ${position.y.toFixed(2)})`);
-        
         updatePosition(employeeId, position);
       } else {
         console.log(`⚠️  Pas assez d'ancres: ${anchors.length}/3`);
-        if (anchors.length > 0) {
-          // Fallback pour moins de 3 ancres
-          const anchor = anchors[0];
-          const position = { x: anchor.x, y: anchor.y };
-          updatePosition(employeeId, position);
-        }
+        const anchor = anchors[0];
+        const position = { x: anchor.x, y: anchor.y };
+        updatePosition(employeeId, position);
       }
     }
   );
 }
 
+// Mise à jour de la position
 function updatePosition(employeeId, position) {
   db.run(
     `UPDATE employees 
@@ -348,6 +347,8 @@ function updatePosition(employeeId, position) {
       if (!err) {
         console.log(`✅ Position enregistrée pour ${employeeId}`);
         broadcastPosition(employeeId, position);
+      } else {
+        console.error('❌ Update position error:', err.message);
       }
     }
   );
@@ -391,7 +392,10 @@ function trilateration(anchors) {
 // Diffuser position
 function broadcastPosition(employeeId, position) {
   db.get(`SELECT * FROM employees WHERE id = ?`, [employeeId], (err, employee) => {
-    if (err || !employee) return;
+    if (err || !employee) {
+      console.error('❌ Broadcast error:', err ? err.message : 'Employé non trouvé');
+      return;
+    }
     
     const message = JSON.stringify({ 
       type: 'position_update', 
@@ -400,7 +404,10 @@ function broadcastPosition(employeeId, position) {
     });
     
     [...clients.web, ...clients.mobile].forEach(c => {
-      if (c.readyState === WebSocket.OPEN) c.send(message);
+      if (c.readyState === WebSocket.OPEN) {
+        c.send(message);
+        console.log(`📢 Position diffusée à ${c.clientType}: ${employee.prenom} ${employee.nom}`);
+      }
     });
   });
 }
@@ -420,13 +427,21 @@ function handleQRScan(data) {
     
     db.run('UPDATE employees SET is_active=?, last_seen=? WHERE id=?', 
       [newStatus, now, employee.id], 
-      () => {
+      (err) => {
+        if (err) {
+          console.error('❌ QR scan update error:', err.message);
+          return;
+        }
         const pointageId = uuidv4();
         db.run(
           `INSERT INTO pointages (id, employee_id, employee_name, type, timestamp, date)
            VALUES (?,?,?,?,?,?)`,
           [pointageId, employee.id, `${employee.prenom} ${employee.nom}`, pointageType, now, new Date().toISOString().split('T')[0]],
-          () => {
+          (err) => {
+            if (err) {
+              console.error('❌ Pointage insert error:', err.message);
+              return;
+            }
             broadcast('scan_result', {
               success: true,
               action: pointageType,
@@ -448,7 +463,11 @@ function handlePointage(data) {
     `INSERT INTO pointages (id, employee_id, employee_name, type, timestamp, date) 
      VALUES (?,?,?,?,?,?)`,
     [pointageId, employeeId, employeeName, type, timestamp, date],
-    () => {
+    (err) => {
+      if (err) {
+        console.error('❌ Pointage error:', err.message);
+        return;
+      }
       broadcast('pointage_recorded', { pointageId, employeeId, type, timestamp });
     }
   );
@@ -456,13 +475,17 @@ function handlePointage(data) {
 
 function sendActiveEmployees(ws) {
   db.all('SELECT * FROM employees WHERE is_active=1 ORDER BY nom, prenom', [], (err, employees) => {
-    if (err) return;
+    if (err) {
+      console.error('❌ Active employees error:', err.message);
+      return;
+    }
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ 
         type: 'active_employees', 
         employees, 
         timestamp: Date.now() 
       }));
+      console.log(`📢 Employés actifs envoyés à ${ws.clientType}`);
     }
   });
 }
@@ -470,7 +493,10 @@ function sendActiveEmployees(ws) {
 function broadcast(type, data) {
   const message = JSON.stringify({ type, ...data, timestamp: Date.now() });
   [...clients.web, ...clients.mobile].forEach(c => {
-    if (c.readyState === WebSocket.OPEN) c.send(message);
+    if (c.readyState === WebSocket.OPEN) {
+      c.send(message);
+      console.log(`📢 Broadcast ${type} à ${c.clientType}`);
+    }
   });
 }
 
@@ -489,6 +515,7 @@ app.get('/api/health', (req, res) => {
     websocket: wss.clients.size,
     esp32: clients.esp32.size,
     web: clients.web.size,
+    mobile: clients.mobile.size,
     timestamp: Date.now() 
   });
 });
