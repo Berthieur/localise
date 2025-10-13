@@ -7,19 +7,18 @@ const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
 
-// === CONFIGURATION ===
+// ================= CONFIGURATION =================
 const app = express();
 const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 
-// === WebSocket avec support proxy ===
 const wss = new WebSocket.Server({ 
   server,
   perMessageDeflate: false,
   clientTracking: true
 });
 
-// === Middlewares ===
+// ================= MIDDLEWARES =================
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -29,22 +28,20 @@ const publicDir = path.join(__dirname, 'public');
 if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir);
 app.use(express.static(publicDir));
 
-// === Base SQLite (persistance Render) ===
-const dbDir = path.join(__dirname, 'data');
-if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir);
-
-const DB_PATH = path.join(dbDir, 'tracking.db');
+// ================= BASE DE DONNÉES =================
+const DB_PATH = path.join(__dirname, 'tracking.db');
 const db = new sqlite3.Database(DB_PATH, (err) => {
   if (err) console.error('❌ Erreur DB:', err);
   else {
-    console.log('✅ Connexion DB établie:', DB_PATH);
+    console.log('✅ DB:', DB_PATH);
     initDatabase();
   }
 });
 
-// === Initialisation des tables ===
+// ================= INIT DB =================
 function initDatabase() {
   db.serialize(() => {
+    // Table employees
     db.run(`CREATE TABLE IF NOT EXISTS employees (
       id TEXT PRIMARY KEY,
       nom TEXT NOT NULL,
@@ -64,6 +61,7 @@ function initDatabase() {
       lieu_naissance TEXT
     )`);
 
+    // Table rssi_measurements
     db.run(`CREATE TABLE IF NOT EXISTS rssi_measurements (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       employee_id TEXT,
@@ -76,6 +74,11 @@ function initDatabase() {
       FOREIGN KEY (employee_id) REFERENCES employees(id)
     )`);
 
+    // Index pour performances
+    db.run(`CREATE INDEX IF NOT EXISTS idx_rssi_employee 
+            ON rssi_measurements(employee_id, timestamp DESC)`);
+
+    // Tables annexes
     db.run(`CREATE TABLE IF NOT EXISTS pointages (
       id TEXT PRIMARY KEY,
       employee_id TEXT,
@@ -98,20 +101,18 @@ function initDatabase() {
       FOREIGN KEY (employee_id) REFERENCES employees(id)
     )`);
 
-    // Ajouter des employés test si vide
+    // Données de test
     db.get("SELECT COUNT(*) as count FROM employees", [], (err, row) => {
       if (!err && row.count === 0) {
-        console.log('📝 Ajout de données de test...');
-        const testEmployees = [
-          ['emp-1', 'Rakoto', 'Jean', 'employé', 1, Date.now()],
-          ['emp-2', 'Rasoa', 'Marie', 'manager', 0, Date.now()],
-          ['emp-3', 'Rabe', 'Paul', 'employé', 1, Date.now()]
+        console.log('📝 Ajout données test...');
+        const testData = [
+          ['emp-1', 'fun', 'tero', 'employé', 1, Date.now()],
+          ['emp-2', 'Rakoto', 'Jean', 'employé', 0, Date.now()],
+          ['emp-3', 'Rasoa', 'Marie', 'manager', 0, Date.now()]
         ];
-        testEmployees.forEach(emp => {
-          db.run(
-            `INSERT INTO employees (id, nom, prenom, type, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-            emp
-          );
+        testData.forEach(emp => {
+          db.run(`INSERT INTO employees (id, nom, prenom, type, is_active, created_at) 
+                  VALUES (?, ?, ?, ?, ?, ?)`, emp);
         });
       }
     });
@@ -119,15 +120,16 @@ function initDatabase() {
   console.log('✅ Tables initialisées');
 }
 
-// === WebSocket clients ===
+// ================= WEBSOCKET CLIENTS =================
 const clients = { web: new Set(), esp32: new Set(), mobile: new Set() };
 
-// === Connexions WebSocket ===
+// ================= CONNEXIONS WEBSOCKET =================
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const clientType = url.searchParams.get('type') || 'web';
 
-  console.log(`🔌 Nouvelle connexion WebSocket: ${clientType} (Total: ${wss.clients.size})`);
+  console.log(`🔌 ${clientType} connecté (Total: ${wss.clients.size})`);
+  
   ws.clientType = clientType;
   ws.isAlive = true;
 
@@ -135,14 +137,18 @@ wss.on('connection', (ws, req) => {
   else if (clientType === 'mobile') clients.mobile.add(ws);
   else clients.web.add(ws);
 
+  // Message de bienvenue
   ws.send(JSON.stringify({
     type: 'connected',
-    message: 'Connecté au serveur de suivi',
+    message: `Serveur OK - ${clientType}`,
     timestamp: Date.now(),
     clientType
   }));
 
-  if (clientType === 'web' || clientType === 'mobile') setTimeout(() => sendActiveEmployees(ws), 500);
+  // Envoyer employés actifs aux clients web/mobile
+  if (clientType === 'web' || clientType === 'mobile') {
+    setTimeout(() => sendActiveEmployees(ws), 500);
+  }
 
   ws.on('pong', () => { ws.isAlive = true; });
 
@@ -151,22 +157,24 @@ wss.on('connection', (ws, req) => {
       const data = JSON.parse(message);
       handleWebSocketMessage(ws, data);
     } catch (error) {
-      console.error('❌ Erreur parsing message:', error);
+      console.error('❌ Parse error:', error.message);
     }
   });
 
   ws.on('close', () => {
-    console.log(`🔌 Déconnexion: ${clientType} (Restant: ${wss.clients.size - 1})`);
+    console.log(`🔌 ${clientType} déconnecté (Restant: ${wss.clients.size - 1})`);
     clients.esp32.delete(ws);
     clients.web.delete(ws);
     clients.mobile.delete(ws);
   });
 
-  ws.on('error', (error) => console.error('❌ Erreur WebSocket:', error.message));
+  ws.on('error', (error) => {
+    console.error('❌ WS error:', error.message);
+  });
 });
 
-// === Heartbeat ===
-const heartbeatInterval = setInterval(() => {
+// Heartbeat (30 secondes)
+const heartbeat = setInterval(() => {
   wss.clients.forEach((ws) => {
     if (!ws.isAlive) return ws.terminate();
     ws.isAlive = false;
@@ -174,184 +182,363 @@ const heartbeatInterval = setInterval(() => {
   });
 }, 30000);
 
-wss.on('close', () => clearInterval(heartbeatInterval));
+wss.on('close', () => clearInterval(heartbeat));
 
-// === Gestion messages ===
+// ================= GESTION MESSAGES =================
 function handleWebSocketMessage(ws, data) {
+  console.log(`📥 ${ws.clientType}: ${data.type}`);
+  
   switch (data.type) {
-    case 'rssi_data': handleRSSIData(data); break;
-    case 'scan_qr': handleQRScan(data); break;
-    case 'pointage': handlePointage(data); break;
-    case 'get_active_employees': sendActiveEmployees(ws); break;
-    case 'ping': case 'pong': ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() })); break;
-    default: console.log('⚠️ Type de message inconnu:', data.type);
+    case 'rssi_data': 
+      handleRSSIData(data); 
+      break;
+    case 'scan_qr': 
+      handleQRScan(data); 
+      break;
+    case 'pointage': 
+      handlePointage(data); 
+      break;
+    case 'get_active_employees': 
+      sendActiveEmployees(ws); 
+      break;
+    case 'ping': 
+    case 'pong': 
+      ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() })); 
+      break;
+    default: 
+      console.log('⚠️  Type inconnu:', data.type);
   }
 }
 
+// ================= TRAITEMENT RSSI =================
 function handleRSSIData(data) {
-  const { anchor_id, anchor_x, anchor_y, badges } = data;
+  const { anchor_id, anchor_x, anchor_y, badges, timestamp } = data;
+  
+  console.log(`📡 Ancre #${anchor_id} (${anchor_x}, ${anchor_y}): ${badges?.length || 0} badges`);
+  
   if (!badges || badges.length === 0) return;
 
   badges.forEach(badge => {
     const { ssid, mac, rssi } = badge;
-    if (!ssid || ssid === 'None') return;
-
-    const employeeName = ssid.trim();  // ✅ Suppression du préfixe "BADGE_"
     
-    db.get(`SELECT id FROM employees WHERE nom || ' ' || prenom = ? OR nom = ? OR prenom = ? LIMIT 1`,
-      [employeeName, employeeName, employeeName],
+    if (!ssid || ssid === 'None' || !ssid.trim()) return;
+
+    const employeeName = ssid.trim();
+    
+    console.log(`  🔎 Recherche: "${employeeName}"`);
+    
+    // Recherche flexible (insensible à la casse, ordre prénom/nom)
+    db.get(
+      `SELECT id, nom, prenom FROM employees 
+       WHERE LOWER(TRIM(nom || ' ' || prenom)) = LOWER(?) 
+          OR LOWER(TRIM(prenom || ' ' || nom)) = LOWER(?)
+          OR LOWER(TRIM(nom)) = LOWER(?) 
+          OR LOWER(TRIM(prenom)) = LOWER(?)
+       LIMIT 1`,
+      [employeeName, employeeName, employeeName, employeeName],
       (err, employee) => {
-        if (err || !employee) return;
+        if (err) {
+          console.error('❌ DB error:', err.message);
+          return;
+        }
+        
+        if (!employee) {
+          console.log(`⚠️  Non trouvé: "${employeeName}"`);
+          return;
+        }
+        
+        console.log(`✅ ${employee.prenom} ${employee.nom} (${employee.id})`);
+        
+        // Enregistrer RSSI
         db.run(
           `INSERT INTO rssi_measurements (employee_id, anchor_id, anchor_x, anchor_y, rssi, mac, timestamp)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [employee.id, anchor_id, anchor_x, anchor_y, rssi, mac, Date.now()],
-          (err) => { if (!err) calculatePosition(employee.id); }
+          (err) => { 
+            if (err) {
+              console.error('❌ Insert error:', err.message);
+            } else {
+              console.log(`📝 RSSI: ${employee.prenom} ${employee.nom} = ${rssi} dBm`);
+              calculatePosition(employee.id); 
+            }
+          }
         );
       }
     );
   });
 }
 
-
+// ================= CALCUL POSITION =================
 function calculatePosition(employeeId) {
-  const threshold = Date.now() - 5000;
-  db.all(`SELECT anchor_id, anchor_x, anchor_y, rssi
-          FROM rssi_measurements
-          WHERE employee_id = ? AND timestamp > ?
-          ORDER BY timestamp DESC LIMIT 10`,
+  const threshold = Date.now() - 5000; // 5 secondes
+  
+  db.all(
+    `SELECT anchor_id, anchor_x, anchor_y, rssi
+     FROM rssi_measurements
+     WHERE employee_id = ? AND timestamp > ?
+     ORDER BY timestamp DESC LIMIT 10`,
     [employeeId, threshold],
     (err, measurements) => {
-      if (err || !measurements || measurements.length < 3) return;
+      if (err) {
+        console.error('❌ Calc error:', err.message);
+        return;
+      }
+      
+      if (!measurements || measurements.length < 3) {
+        console.log(`⚠️  Pas assez de mesures: ${measurements?.length || 0}/3`);
+        return;
+      }
 
+      console.log(`📊 ${measurements.length} mesures pour triangulation:`);
+      
+      // Grouper par ancre
       const anchorData = {};
       measurements.forEach(m => {
         const distance = rssiToDistance(m.rssi);
+        console.log(`   Ancre #${m.anchor_id}: ${m.rssi} dBm → ${distance.toFixed(2)}m`);
+        
         if (!anchorData[m.anchor_id] || distance < anchorData[m.anchor_id].distance) {
-          anchorData[m.anchor_id] = { x: m.anchor_x, y: m.anchor_y, distance };
+          anchorData[m.anchor_id] = { 
+            x: m.anchor_x, 
+            y: m.anchor_y, 
+            distance 
+          };
         }
       });
 
       const anchors = Object.values(anchorData);
+      
       if (anchors.length >= 3) {
         const position = trilateration(anchors);
+        
+        console.log(`📍 Position: (${position.x.toFixed(2)}, ${position.y.toFixed(2)})`);
+        
         db.run(
-          `UPDATE employees SET last_position_x = ?, last_position_y = ?, last_seen = ? WHERE id = ?`,
+          `UPDATE employees 
+           SET last_position_x = ?, last_position_y = ?, last_seen = ?
+           WHERE id = ?`,
           [position.x, position.y, Date.now(), employeeId],
-          (err) => { if (!err) broadcastPosition(employeeId, position); }
+          (err) => {
+            if (!err) {
+              console.log(`✅ Position enregistrée pour ${employeeId}`);
+              broadcastPosition(employeeId, position);
+            }
+          }
         );
+      } else {
+        console.log(`⚠️  Pas assez d'ancres: ${anchors.length}/3`);
       }
     }
   );
 }
 
+// Conversion RSSI → Distance
 function rssiToDistance(rssi, txPower = -59, n = 2.0) {
   if (rssi === 0) return -1.0;
   return Math.pow(10, (txPower - rssi) / (10 * n));
 }
 
+// Trilatération
 function trilateration(anchors) {
   anchors.sort((a, b) => a.distance - b.distance);
   const [a1, a2, a3] = anchors.slice(0, 3);
+  
   const A = 2 * a2.x - 2 * a1.x;
   const B = 2 * a2.y - 2 * a1.y;
   const C = a1.distance**2 - a2.distance**2 - a1.x**2 + a2.x**2 - a1.y**2 + a2.y**2;
   const D = 2 * a3.x - 2 * a2.x;
   const E = 2 * a3.y - 2 * a2.y;
   const F = a2.distance**2 - a3.distance**2 - a2.x**2 + a3.x**2 - a2.y**2 + a3.y**2;
+  
   const denom1 = E*A - B*D;
   const denom2 = B*D - A*E;
 
   if (Math.abs(denom1) < 0.0001 || Math.abs(denom2) < 0.0001) {
-    const totalWeight = anchors.reduce((sum, a) => sum + 1 / Math.max(a.distance,0.1),0);
-    const x = anchors.reduce((sum,a) => sum + a.x/Math.max(a.distance,0.1),0)/totalWeight;
-    const y = anchors.reduce((sum,a) => sum + a.y/Math.max(a.distance,0.1),0)/totalWeight;
+    // Centroïde pondéré
+    const totalWeight = anchors.reduce((sum, a) => sum + 1 / Math.max(a.distance, 0.1), 0);
+    const x = anchors.reduce((sum, a) => sum + a.x / Math.max(a.distance, 0.1), 0) / totalWeight;
+    const y = anchors.reduce((sum, a) => sum + a.y / Math.max(a.distance, 0.1), 0) / totalWeight;
     return { x, y };
   }
-  return { x: (C*E - F*B)/denom1, y: (C*D - A*F)/denom2 };
+  
+  return { 
+    x: (C*E - F*B) / denom1, 
+    y: (C*D - A*F) / denom2 
+  };
 }
 
+// Diffuser position
 function broadcastPosition(employeeId, position) {
   db.get(`SELECT * FROM employees WHERE id = ?`, [employeeId], (err, employee) => {
     if (err || !employee) return;
-    const message = JSON.stringify({ type:'position_update', employee, timestamp:Date.now() });
-    [...clients.web,...clients.mobile].forEach(c => { if(c.readyState===WebSocket.OPEN) c.send(message); });
-  });
-}
-
-// === QR Scan & Pointage ===
-function handleQRScan(data) {
-  const { qr_code } = data;
-  db.get('SELECT id, nom, prenom, is_active FROM employees WHERE id = ?', [qr_code], (err, employee) => {
-    if (err || !employee) return broadcast('scan_result',{ success:false, message:'Employé non trouvé' });
-
-    const now = Date.now();
-    const newStatus = employee.is_active === 0 ? 1 : 0;
-    const pointageType = newStatus===1?'ENTREE':'SORTIE';
-    db.run('UPDATE employees SET is_active=?, last_seen=? WHERE id=?',[newStatus,now,employee.id], err=>{
-      const pointageId = uuidv4();
-      db.run(`INSERT INTO pointages (id, employee_id, employee_name, type, timestamp, date)
-              VALUES (?,?,?,?,?,?)`,[pointageId,employee.id,`${employee.prenom} ${employee.nom}`,pointageType,now,new Date().toISOString().split('T')[0]], ()=>{
-        broadcast('scan_result',{
-          success:true,
-          action:pointageType,
-          message:`${employee.prenom} ${employee.nom} est ${pointageType==='ENTREE'?'entré':'sorti'}`,
-          employeeId:employee.id
-        });
-      });
+    
+    const message = JSON.stringify({ 
+      type: 'position_update', 
+      employee, 
+      timestamp: Date.now() 
+    });
+    
+    [...clients.web, ...clients.mobile].forEach(c => {
+      if (c.readyState === WebSocket.OPEN) c.send(message);
     });
   });
 }
 
-function handlePointage(data){
-  const { employeeId, employeeName, type, timestamp, date } = data;
-  const pointageId = uuidv4();
-  db.run(`INSERT INTO pointages (id, employee_id, employee_name, type, timestamp, date) VALUES (?,?,?,?,?,?)`,
-    [pointageId,employeeId,employeeName,type,timestamp,date],
-    ()=>{ broadcast('pointage_recorded',{pointageId,employeeId,type,timestamp}); }
-  );
-}
+// ================= QR & POINTAGE =================
+function handleQRScan(data) {
+  const { qr_code } = data;
+  
+  db.get('SELECT id, nom, prenom, is_active FROM employees WHERE id = ?', [qr_code], (err, employee) => {
+    if (err || !employee) {
+      return broadcast('scan_result', { success: false, message: 'Employé non trouvé' });
+    }
 
-function sendActiveEmployees(ws){
-  db.all('SELECT * FROM employees WHERE is_active=1 ORDER BY nom,prenom',[],(err,employees)=>{
-    if(err) return;
-    if(ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'active_employees',employees,timestamp:Date.now()}));
+    const now = Date.now();
+    const newStatus = employee.is_active === 0 ? 1 : 0;
+    const pointageType = newStatus === 1 ? 'ENTREE' : 'SORTIE';
+    
+    db.run('UPDATE employees SET is_active=?, last_seen=? WHERE id=?', 
+      [newStatus, now, employee.id], 
+      () => {
+        const pointageId = uuidv4();
+        db.run(
+          `INSERT INTO pointages (id, employee_id, employee_name, type, timestamp, date)
+           VALUES (?,?,?,?,?,?)`,
+          [pointageId, employee.id, `${employee.prenom} ${employee.nom}`, pointageType, now, new Date().toISOString().split('T')[0]],
+          () => {
+            broadcast('scan_result', {
+              success: true,
+              action: pointageType,
+              message: `${employee.prenom} ${employee.nom} est ${pointageType === 'ENTREE' ? 'entré' : 'sorti'}`,
+              employeeId: employee.id
+            });
+          }
+        );
+      }
+    );
   });
 }
 
-function broadcast(type,data){
-  const message = JSON.stringify({...data,type,timestamp:Date.now()});
-  [...clients.web,...clients.mobile].forEach(c=>{if(c.readyState===WebSocket.OPEN)c.send(message);});
+function handlePointage(data) {
+  const { employeeId, employeeName, type, timestamp, date } = data;
+  const pointageId = uuidv4();
+  
+  db.run(
+    `INSERT INTO pointages (id, employee_id, employee_name, type, timestamp, date) 
+     VALUES (?,?,?,?,?,?)`,
+    [pointageId, employeeId, employeeName, type, timestamp, date],
+    () => {
+      broadcast('pointage_recorded', { pointageId, employeeId, type, timestamp });
+    }
+  );
 }
 
-// === ROUTES REST API ===
-app.get('/', (req,res)=>{
-  const indexPath = path.join(publicDir,'index.html');
-  if(!fs.existsSync(indexPath)){
-    fs.writeFileSync(indexPath,'<h1>🛰️ Serveur de suivi en temps réel</h1>','utf-8');
+function sendActiveEmployees(ws) {
+  db.all('SELECT * FROM employees WHERE is_active=1 ORDER BY nom, prenom', [], (err, employees) => {
+    if (err) return;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ 
+        type: 'active_employees', 
+        employees, 
+        timestamp: Date.now() 
+      }));
+    }
+  });
+}
+
+function broadcast(type, data) {
+  const message = JSON.stringify({ type, ...data, timestamp: Date.now() });
+  [...clients.web, ...clients.mobile].forEach(c => {
+    if (c.readyState === WebSocket.OPEN) c.send(message);
+  });
+}
+
+// ================= ROUTES API =================
+app.get('/', (req, res) => {
+  const indexPath = path.join(publicDir, 'index.html');
+  if (!fs.existsSync(indexPath)) {
+    fs.writeFileSync(indexPath, '<h1>🛰️ Serveur Suivi Temps Réel</h1><p>WebSocket actif</p>', 'utf-8');
   }
   res.sendFile(indexPath);
 });
 
-app.get('/api/health',(req,res)=>res.json({status:'ok', websocket:wss.clients.size, timestamp:Date.now()}));
-app.get('/api/employees',(req,res)=>db.all('SELECT * FROM employees ORDER BY nom, prenom',[],(err,rows)=>err?res.status(500).json({success:false,message:err.message}):res.json({success:true,employees:rows})));
-app.get('/api/employees/active',(req,res)=>db.all('SELECT * FROM employees WHERE is_active=1',[],(err,rows)=>err?res.status(500).json({success:false,message:err.message}):res.json({success:true,employees:rows})));
-app.post('/api/employees',(req,res)=>{
-  const { nom, prenom, type, email, telephone } = req.body;
-  const id = uuidv4();
-  db.run(`INSERT INTO employees (id, nom, prenom, type, is_active, created_at, email, telephone)
-          VALUES (?,?,?,?,?,?,?,?)`,
-          [id,nom,prenom,type||'employé',0,Date.now(),email,telephone],
-          err=>err?res.status(500).json({success:false,message:err.message}):res.json({success:true,id,message:'Employé ajouté'}));
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    websocket: wss.clients.size,
+    esp32: clients.esp32.size,
+    web: clients.web.size,
+    timestamp: Date.now() 
+  });
 });
 
-app.post('/api/rssi-data',(req,res)=>{ handleRSSIData(req.body); res.json({success:true,message:'Données RSSI traitées'}); });
-app.post('/api/scan',(req,res)=>{ handleQRScan(req.body); res.json({success:true,message:'Scan traité'}); });
-app.post('/api/pointages',(req,res)=>{ handlePointage(req.body); res.json({success:true,message:'Pointage enregistré'}); });
-app.get('/api/pointages/history',(req,res)=>db.all('SELECT * FROM pointages ORDER BY timestamp DESC LIMIT 100',[],(err,rows)=>err?res.status(500).json({success:false,message:err.message}):res.json({success:true,pointages:rows})));
+app.get('/api/employees', (req, res) => {
+  db.all('SELECT * FROM employees ORDER BY nom, prenom', [], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, message: err.message });
+    res.json({ success: true, employees: rows });
+  });
+});
 
-// === Démarrage serveur ===
-server.listen(PORT,'0.0.0.0',()=>console.log(`🚀 Serveur démarré sur le port ${PORT} 🌐`));
+app.get('/api/employees/active', (req, res) => {
+  db.all('SELECT * FROM employees WHERE is_active=1', [], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, message: err.message });
+    res.json({ success: true, employees: rows });
+  });
+});
 
-// === Arrêt propre ===
-process.on('SIGTERM',()=>{ console.log('⏹️ Arrêt serveur...'); server.close(()=>{ db.close(); process.exit(0); }); });
+app.post('/api/employees', (req, res) => {
+  const { nom, prenom, type, email, telephone } = req.body;
+  const id = uuidv4();
+  
+  db.run(
+    `INSERT INTO employees (id, nom, prenom, type, is_active, created_at, email, telephone)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    [id, nom, prenom, type || 'employé', 0, Date.now(), email, telephone],
+    (err) => {
+      if (err) return res.status(500).json({ success: false, message: err.message });
+      res.json({ success: true, id, message: 'Employé ajouté' });
+    }
+  );
+});
+
+app.post('/api/rssi-data', (req, res) => { 
+  handleRSSIData(req.body); 
+  res.json({ success: true, message: 'Données RSSI traitées' }); 
+});
+
+app.post('/api/scan', (req, res) => { 
+  handleQRScan(req.body); 
+  res.json({ success: true, message: 'Scan traité' }); 
+});
+
+app.post('/api/pointages', (req, res) => { 
+  handlePointage(req.body); 
+  res.json({ success: true, message: 'Pointage enregistré' }); 
+});
+
+app.get('/api/pointages/history', (req, res) => {
+  db.all('SELECT * FROM pointages ORDER BY timestamp DESC LIMIT 100', [], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, message: err.message });
+    res.json({ success: true, pointages: rows });
+  });
+});
+
+// ================= DÉMARRAGE =================
+server.listen(PORT, '0.0.0.0', () => {
+  console.log('\n╔════════════════════════════════════╗');
+  console.log('║   Serveur Suivi Temps Réel       ║');
+  console.log('╚════════════════════════════════════╝');
+  console.log(`📡 Port: ${PORT}`);
+  console.log(`🌐 http://localhost:${PORT}`);
+  console.log(`🗄️  DB: ${DB_PATH}`);
+  console.log('═══════════════════════════════════════\n');
+});
+
+// Arrêt propre
+process.on('SIGTERM', () => { 
+  console.log('⏹️  Arrêt...');
+  server.close(() => { 
+    db.close(); 
+    process.exit(0); 
+  });
+});
