@@ -125,9 +125,10 @@ const clients = { web: new Set(), esp32: new Set(), mobile: new Set() };
 
 // ================= CONNEXIONS WEBSOCKET =================
 wss.on('connection', (ws, req) => {
+  console.log(`🔌 New connection from ${req.socket.remoteAddress}`);
   const url = new URL(req.url, `http://${req.headers.host}`);
   const clientType = url.searchParams.get('type') || 'web';
-
+  console.log(`Client type: ${clientType}`);
   console.log(`🔌 ${clientType} connecté (Total: ${wss.clients.size})`);
   
   ws.clientType = clientType;
@@ -171,6 +172,10 @@ wss.on('connection', (ws, req) => {
   ws.on('error', (error) => {
     console.error('❌ WS error:', error.message);
   });
+});
+
+wss.on('error', (error) => {
+  console.error('❌ WebSocket server error:', error);
 });
 
 // Heartbeat (30 secondes)
@@ -286,6 +291,12 @@ function calculatePosition(employeeId) {
       
       if (!measurements || measurements.length < 3) {
         console.log(`⚠️  Pas assez de mesures: ${measurements?.length || 0}/3`);
+        if (measurements.length > 0) {
+          // Fallback pour moins de 3 ancres
+          const anchor = measurements[0];
+          const position = { x: anchor.anchor_x, y: anchor.anchor_y };
+          updatePosition(employeeId, position);
+        }
         return;
       }
 
@@ -313,20 +324,30 @@ function calculatePosition(employeeId) {
         
         console.log(`📍 Position: (${position.x.toFixed(2)}, ${position.y.toFixed(2)})`);
         
-        db.run(
-          `UPDATE employees 
-           SET last_position_x = ?, last_position_y = ?, last_seen = ?
-           WHERE id = ?`,
-          [position.x, position.y, Date.now(), employeeId],
-          (err) => {
-            if (!err) {
-              console.log(`✅ Position enregistrée pour ${employeeId}`);
-              broadcastPosition(employeeId, position);
-            }
-          }
-        );
+        updatePosition(employeeId, position);
       } else {
         console.log(`⚠️  Pas assez d'ancres: ${anchors.length}/3`);
+        if (anchors.length > 0) {
+          // Fallback pour moins de 3 ancres
+          const anchor = anchors[0];
+          const position = { x: anchor.x, y: anchor.y };
+          updatePosition(employeeId, position);
+        }
+      }
+    }
+  );
+}
+
+function updatePosition(employeeId, position) {
+  db.run(
+    `UPDATE employees 
+     SET last_position_x = ?, last_position_y = ?, last_seen = ?
+     WHERE id = ?`,
+    [position.x, position.y, Date.now(), employeeId],
+    (err) => {
+      if (!err) {
+        console.log(`✅ Position enregistrée pour ${employeeId}`);
+        broadcastPosition(employeeId, position);
       }
     }
   );
