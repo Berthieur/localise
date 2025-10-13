@@ -188,7 +188,6 @@ function handleWebSocketMessage(ws, data) {
   }
 }
 
-// === RSSI / Positions ===
 function handleRSSIData(data) {
   const { anchor_id, anchor_x, anchor_y, badges } = data;
   if (!badges || badges.length === 0) return;
@@ -197,7 +196,8 @@ function handleRSSIData(data) {
     const { ssid, mac, rssi } = badge;
     if (!ssid || ssid === 'None') return;
 
-    const employeeName = ssid.replace('BADGE_', '').trim();
+    const employeeName = ssid.trim();  // ✅ Suppression du préfixe "BADGE_"
+    
     db.get(`SELECT id FROM employees WHERE nom || ' ' || prenom = ? OR nom = ? OR prenom = ? LIMIT 1`,
       [employeeName, employeeName, employeeName],
       (err, employee) => {
@@ -212,6 +212,7 @@ function handleRSSIData(data) {
     );
   });
 }
+
 
 function calculatePosition(employeeId) {
   const threshold = Date.now() - 5000;
