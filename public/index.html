@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Suivi Temps Réel - Employés</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    header {
+      background: white;
+      padding: 20px 30px;
+      border-radius: 15px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+      margin-bottom: 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    h1 {
+      color: #667eea;
+      font-size: 28px;
+    }
+
+    .status {
+      display: flex;
+      gap: 20px;
+      align-items: center;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .status-badge.connected {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .status-badge.disconnected {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    .status-badge.connected .status-dot {
+      background: #28a745;
+    }
+
+    .status-badge.disconnected .status-dot {
+      background: #dc3545;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .main-content {
+      display: grid;
+      grid-template-columns: 1fr 350px;
+      gap: 30px;
+    }
+
+    .map-section {
+      background: white;
+      border-radius: 15px;
+      padding: 25px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+
+    .map-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .map-header h2 {
+      color: #333;
+      font-size: 22px;
+    }
+
+    .map-controls {
+      display: flex;
+      gap: 10px;
+    }
+
+    .map-controls button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 8px;
+      background: #667eea;
+      color: white;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.3s;
+    }
+
+    .map-controls button:hover {
+      background: #5568d3;
+      transform: translateY(-2px);
+    }
+
+    #map {
+      width: 100%;
+      height: 600px;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      background: #f5f5f5;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .anchor {
+      position: absolute;
+      width: 30px;
+      height: 30px;
+      background: #ff6b6b;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      font-size: 12px;
+      z-index: 10;
+    }
+
+    .employee-marker {
+      position: absolute;
+      width: 40px;
+      height: 40px;
+      background: #4ecdc4;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.3s;
+      z-index: 20;
+    }
+
+    .employee-marker:hover {
+      transform: scale(1.2);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+    }
+
+    .employee-marker.active {
+      animation: bounce 1s infinite;
+    }
+
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+
+    .employee-tooltip {
+      position: absolute;
+      background: rgba(0,0,0,0.9);
+      color: white;
+      padding: 10px 15px;
+      border-radius: 8px;
+      font-size: 12px;
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 100;
+      display: none;
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .stats-card, .employees-list {
+      background: white;
+      border-radius: 15px;
+      padding: 25px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+
+    .stats-card h3 {
+      color: #333;
+      margin-bottom: 20px;
+      font-size: 18px;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+    }
+
+    .stat-item {
+      text-align: center;
+      padding: 15px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 10px;
+      color: white;
+    }
+
+    .stat-value {
+      font-size: 32px;
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      opacity: 0.9;
+    }
+
+    .employees-list h3 {
+      color: #333;
+      margin-bottom: 15px;
+      font-size: 18px;
+    }
+
+    .employee-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      border-radius: 10px;
+      background: #f8f9fa;
+      margin-bottom: 10px;
+      transition: all 0.3s;
+    }
+
+    .employee-item:hover {
+      background: #e9ecef;
+      transform: translateX(5px);
+    }
+
+    .employee-avatar {
+      width: 45px;
+      height: 45px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      font-size: 18px;
+    }
+
+    .employee-info {
+      flex: 1;
+    }
+
+    .employee-name {
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 3px;
+    }
+
+    .employee-type {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .employee-status {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #28a745;
+      animation: pulse 2s infinite;
+    }
+
+    .no-employees {
+      text-align: center;
+      padding: 30px;
+      color: #999;
+    }
+
+    @media (max-width: 1024px) {
+      .main-content {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🎯 Suivi en Temps Réel</h1>
+      <div class="status">
+        <div class="status-badge disconnected" id="wsStatus">
+          <span class="status-dot"></span>
+          <span>Déconnecté</span>
+        </div>
+        <div class="status-badge">
+          <span>Employés actifs: <strong id="activeCount">0</strong></span>
+        </div>
+      </div>
+    </header>
+
+    <div class="main-content">
+      <div class="map-section">
+        <div class="map-header">
+          <h2>📍 Carte de Localisation</h2>
+          <div class="map-controls">
+            <button onclick="resetView()">🔄 Réinitialiser</button>
+            <button onclick="toggleGrid()">⊞ Grille</button>
+          </div>
+        </div>
+        <div id="map">
+          <div class="employee-tooltip" id="tooltip"></div>
+        </div>
+      </div>
+
+      <div class="sidebar">
+        <div class="stats-card">
+          <h3>📊 Statistiques</h3>
+          <div class="stats-grid">
+            <div class="stat-item">
+              <div class="stat-value" id="totalEmployees">0</div>
+              <div class="stat-label">Total</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value" id="activeEmployees">0</div>
+              <div class="stat-label">Actifs</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value" id="anchorsCount">3</div>
+              <div class="stat-label">Ancres</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-value" id="updateRate">0</div>
+              <div class="stat-label">Mises à jour/min</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="employees-list">
+          <h3>👥 Employés Actifs</h3>
+          <div id="employeesList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Configuration
+    const WS_URL = 'ws://localhost:3000/?type=web';
+    const MAP_WIDTH = 20; // mètres
+    const MAP_HEIGHT = 15; // mètres
+
+    // Variables globales
+    let ws = null;
+    let employees = new Map();
+    let updateCount = 0;
+    let lastUpdateTime = Date.now();
+
+    // Positions des ancres (en mètres)
+    const anchors = [
+      { id: 1, x: 0, y: 0 },
+      { id: 2, x: 20, y: 0 },
+      { id: 3, x: 10, y: 15 }
+    ];
+
+    // Connexion WebSocket
+    function connectWebSocket() {
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => {
+        console.log('✅ WebSocket connecté');
+        updateConnectionStatus(true);
+        requestActiveEmployees();
+      };
+
+      ws.onclose = () => {
+        console.log('❌ WebSocket déconnecté');
+        updateConnectionStatus(false);
+        setTimeout(connectWebSocket, 5000);
+      };
+
+      ws.onerror = (error) => {
+        console.error('❌ Erreur WebSocket:', error);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleMessage(data);
+        } catch (error) {
+          console.error('Erreur parsing message:', error);
+        }
+      };
+    }
+
+    // Gestion des messages
+    function handleMessage(data) {
+      switch (data.type) {
+        case 'connected':
+          console.log('🎉', data.message);
+          break;
+
+        case 'active_employees':
+          updateEmployeesList(data.employees);
+          break;
+
+        case 'position_update':
+          updateEmployeePosition(data.employee);
+          updateCount++;
+          break;
+
+        case 'heartbeat':
+          // Répondre au heartbeat
+          ws.send(JSON.stringify({ type: 'pong' }));
+          break;
+
+        case 'scan_result':
+          showNotification(data.message, data.success);
+          break;
+      }
+    }
+
+    // Demander la liste des employés actifs
+    function requestActiveEmployees() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'get_active_employees' }));
+      }
+    }
+
+    // Mettre à jour le statut de connexion
+    function updateConnectionStatus(connected) {
+      const statusBadge = document.getElementById('wsStatus');
+      if (connected) {
+        statusBadge.className = 'status-badge connected';
+        statusBadge.innerHTML = '<span class="status-dot"></span><span>Connecté</span>';
+      } else {
+        statusBadge.className = 'status-badge disconnected';
+        statusBadge.innerHTML = '<span class="status-dot"></span><span>Déconnecté</span>';
+      }
+    }
+
+    // Mettre à jour la liste des employés
+    function updateEmployeesList(employeeList) {
+      employees.clear();
+      employeeList.forEach(emp => {
+        employees.set(emp.id, emp);
+      });
+
+      renderEmployeesList();
+      renderMap();
+      updateStats();
+    }
+
+    // Mettre à jour la position d'un employé
+    function updateEmployeePosition(employee) {
+      employees.set(employee.id, employee);
+      renderMap();
+      updateStats();
+    }
+
+    // Afficher la liste des employés
+    function renderEmployeesList() {
+      const listContainer = document.getElementById('employeesList');
+      
+      if (employees.size === 0) {
+        listContainer.innerHTML = '<div class="no-employees">Aucun employé actif</div>';
+        return;
+      }
+
+      listContainer.innerHTML = '';
+      employees.forEach(emp => {
+        const item = document.createElement('div');
+        item.className = 'employee-item';
+        item.innerHTML = `
+          <div class="employee-avatar">${emp.prenom[0]}${emp.nom[0]}</div>
+          <div class="employee-info">
+            <div class="employee-name">${emp.prenom} ${emp.nom}</div>
+            <div class="employee-type">${emp.type || 'N/A'}</div>
+          </div>
+          <div class="employee-status"></div>
+        `;
+        listContainer.appendChild(item);
+      });
+    }
+
+    // Afficher la carte
+    function renderMap() {
+      const map = document.getElementById('map');
+      const mapRect = map.getBoundingClientRect();
+      
+      // Nettoyer les marqueurs existants
+      map.querySelectorAll('.employee-marker, .anchor').forEach(el => el.remove());
+
+      // Afficher les ancres
+      anchors.forEach(anchor => {
+        const anchorEl = document.createElement('div');
+        anchorEl.className = 'anchor';
+        anchorEl.textContent = anchor.id;
+        anchorEl.style.left = `${(anchor.x / MAP_WIDTH) * 100}%`;
+        anchorEl.style.top = `${(anchor.y / MAP_HEIGHT) * 100}%`;
+        anchorEl.style.transform = 'translate(-50%, -50%)';
+        map.appendChild(anchorEl);
+      });
+
+      // Afficher les employés
+      employees.forEach(emp => {
+        if (emp.last_position_x != null && emp.last_position_y != null) {
+          const marker = document.createElement('div');
+          marker.className = 'employee-marker active';
+          marker.textContent = emp.prenom[0] + emp.nom[0];
+          
+          const x = (emp.last_position_x / MAP_WIDTH) * 100;
+          const y = (emp.last_position_y / MAP_HEIGHT) * 100;
+          
+          marker.style.left = `${x}%`;
+          marker.style.top = `${y}%`;
+          marker.style.transform = 'translate(-50%, -50%)';
+          
+          // Tooltip au survol
+          marker.addEventListener('mouseenter', (e) => {
+            showTooltip(e, emp);
+          });
+          
+          marker.addEventListener('mouseleave', () => {
+            hideTooltip();
+          });
+          
+          map.appendChild(marker);
+        }
+      });
+    }
+
+    // Afficher le tooltip
+    function showTooltip(event, employee) {
+      const tooltip = document.getElementById('tooltip');
+      tooltip.style.display = 'block';
+      tooltip.innerHTML = `
+        <strong>${employee.prenom} ${employee.nom}</strong><br>
+        Position: (${employee.last_position_x?.toFixed(2)}, ${employee.last_position_y?.toFixed(2)})<br>
+        Type: ${employee.type || 'N/A'}
+      `;
+      tooltip.style.left = event.clientX + 'px';
+      tooltip.style.top = (event.clientY - 80) + 'px';
+    }
+
+    // Masquer le tooltip
+    function hideTooltip() {
+      document.getElementById('tooltip').style.display = 'none';
+    }
+
+    // Mettre à jour les statistiques
+    function updateStats() {
+      const activeEmp = Array.from(employees.values()).filter(e => e.is_active === 1).length;
+      
+      document.getElementById('totalEmployees').textContent = employees.size;
+      document.getElementById('activeEmployees').textContent = activeEmp;
+      document.getElementById('activeCount').textContent = activeEmp;
+      
+      // Calcul du taux de mise à jour
+      const now = Date.now();
+      const elapsed = (now - lastUpdateTime) / 60000; // minutes
+      if (elapsed > 0) {
+        const rate = Math.round(updateCount / elapsed);
+        document.getElementById('updateRate').textContent = rate;
+      }
+    }
+
+    // Réinitialiser la vue
+    function resetView() {
+      renderMap();
+    }
+
+    // Basculer la grille
+    function toggleGrid() {
+      const map = document.getElementById('map');
+      map.style.backgroundImage = map.style.backgroundImage ? '' : 
+        'linear-gradient(#e0e0e0 1px, transparent 1px), linear-gradient(90deg, #e0e0e0 1px, transparent 1px)';
+      map.style.backgroundSize = map.style.backgroundSize ? '' : '50px 50px';
+    }
+
+    // Notification
+    function showNotification(message, success) {
+      alert(`${success ? '✅' : '❌'} ${message}`);
+    }
+
+    // Initialisation
+    connectWebSocket();
+    setInterval(updateStats, 1000);
+    setInterval(requestActiveEmployees, 10000); // Rafraîchir toutes les 10s
+  </script>
+</body>
+</html>
