@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "description": "Service WebSocket pour suivi temps réel uniquement",
   "main": "suivi.js",
-  "scripts": {
-    "start": "node suivi.js"
-  },
   "engines": {
     "node": ">=16.0.0"
+  },
+  "scripts": {
+    "start": "node suivi.js",
+    "postinstall": "npm rebuild sqlite3 --build-from-source"
   },
   "dependencies": {
     "cors": "^2.8.5",
