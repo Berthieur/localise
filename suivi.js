@@ -118,7 +118,6 @@ async function initDatabase() {
     if (rows[0].count == 0) {
       console.log('📝 Ajout données test...');
       const testData = [
-        ['emp-1', 'fun', 'tero', 'employe', 1, Date.now()],
         ['emp-2', 'Rakoto', 'Jean', 'employe', 0, Date.now()],
         ['emp-3', 'Rasoa', 'Marie', 'manager', 0, Date.now()],
         ['emp-4', 'info', 'Spray', 'employe', 0, Date.now()]
@@ -142,11 +141,11 @@ const clients = { web: new Set(), esp32: new Set(), mobile: new Set() };
 
 // ================= CONNEXIONS WEBSOCKET =================
 wss.on('connection', (ws, req) => {
-  console.log(`🔌 New connection from ${req.socket.remoteAddress}`);
+  console.log(`🔌 Nouvelle connexion depuis ${req.socket.remoteAddress}`);
   const url = new URL(req.url, `http://${req.headers.host}`);
   const clientType = url.searchParams.get('type') || 'web';
   console.log(`Client type: ${clientType}`);
-  console.log(`🔌 ${clientType} connecté (Total: ${wss.clients.size})`);
+  console.log(`🔌 ${clientType} connecté (Total: ${wss.clients.size}, Web: ${clients.web.size}, ESP32: ${clients.esp32.size}, Mobile: ${clients.mobile.size})`);
   
   ws.clientType = clientType;
   ws.isAlive = true;
@@ -171,6 +170,7 @@ wss.on('connection', (ws, req) => {
   ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message);
+      console.log(`📥 Message reçu de ${clientType}:`, data);
       await handleWebSocketMessage(ws, data);
     } catch (error) {
       console.error('❌ Parse error:', error.message);
@@ -178,7 +178,7 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    console.log(`🔌 ${clientType} déconnecté (Restant: ${wss.clients.size - 1})`);
+    console.log(`🔌 ${clientType} déconnecté (Restant: ${wss.clients.size - 1}, Web: ${clients.web.size - 1}, ESP32: ${clients.esp32.size}, Mobile: ${clients.mobile.size})`);
     clients.esp32.delete(ws);
     clients.web.delete(ws);
     clients.mobile.delete(ws);
@@ -196,7 +196,10 @@ wss.on('error', (error) => {
 // Heartbeat
 const heartbeat = setInterval(() => {
   wss.clients.forEach((ws) => {
-    if (!ws.isAlive) return ws.terminate();
+    if (!ws.isAlive) {
+      console.log(`🔌 Terminaison client ${ws.clientType} inactif`);
+      return ws.terminate();
+    }
     ws.isAlive = false;
     ws.ping();
   });
@@ -298,14 +301,6 @@ async function calculatePosition(employeeId) {
       return;
     }
     
-    if (measurements.length < 3) {
-      console.log(`⚠️ Pas assez de mesures: ${measurements.length}/3`);
-      const anchor = measurements[0];
-      const position = { x: anchor.anchor_x, y: anchor.anchor_y };
-      await updatePosition(employeeId, position);
-      return;
-    }
-
     console.log(`📊 ${measurements.length} mesures pour triangulation:`);
     
     const anchorData = {};
@@ -330,7 +325,7 @@ async function calculatePosition(employeeId) {
       await updatePosition(employeeId, position);
     } else {
       console.log(`⚠️ Pas assez d'ancres: ${anchors.length}/3`);
-      const anchor = anchors[0];
+      const anchor = anchors[0] || { x: 0, y: 0 };
       const position = { x: anchor.x, y: anchor.y };
       await updatePosition(employeeId, position);
     }
@@ -392,6 +387,7 @@ function trilateration(anchors) {
 // Diffuser position
 async function broadcastPosition(employeeId, position) {
   try {
+    console.log(`📢 Tentative de diffusion à ${clients.web.size} clients web et ${clients.mobile.size} clients mobile`);
     const { rows } = await pool.query(`SELECT * FROM employees WHERE id = $1`, [employeeId]);
     if (rows.length === 0) {
       console.error('❌ Broadcast error: Employé non trouvé');
@@ -409,8 +405,13 @@ async function broadcastPosition(employeeId, position) {
       if (c.readyState === WebSocket.OPEN) {
         c.send(message);
         console.log(`📢 Position diffusée à ${c.clientType}: ${employee.prenom} ${employee.nom}`);
+      } else {
+        console.log(`⚠️ Client ${c.clientType} non ouvert`);
       }
     });
+    if (clients.web.size === 0 && clients.mobile.size === 0) {
+      console.log('⚠️ Aucun client connecté pour la diffusion');
+    }
   } catch (err) {
     console.error('❌ Broadcast error:', err.message);
   }
@@ -448,6 +449,8 @@ async function handleQRScan(data) {
       message: `${employee.prenom} ${employee.nom} est ${pointageType === 'ENTREE' ? 'entré' : 'sorti'}`,
       employeeId: employee.id
     });
+    // Envoyer la liste mise à jour des employés actifs
+    await broadcastActiveEmployees();
   } catch (err) {
     console.error('❌ QR scan error:', err.message);
   }
@@ -464,6 +467,8 @@ async function handlePointage(data) {
       [pointageId, employeeId, employeeName, type, timestamp, date]
     );
     broadcast('pointage_recorded', { pointageId, employeeId, type, timestamp });
+    // Envoyer la liste mise à jour des employés actifs
+    await broadcastActiveEmployees();
   } catch (err) {
     console.error('❌ Pointage error:', err.message);
   }
@@ -478,10 +483,29 @@ async function sendActiveEmployees(ws) {
         employees: rows, 
         timestamp: Date.now() 
       }));
-      console.log(`📢 Employés actifs envoyés à ${ws.clientType}`);
+      console.log(`📢 Employés actifs envoyés à ${ws.clientType}: ${rows.length} employés`);
     }
   } catch (err) {
     console.error('❌ Active employees error:', err.message);
+  }
+}
+
+async function broadcastActiveEmployees() {
+  try {
+    const { rows } = await pool.query('SELECT * FROM employees WHERE is_active=1 ORDER BY nom, prenom');
+    const message = JSON.stringify({ 
+      type: 'active_employees', 
+      employees: rows, 
+      timestamp: Date.now() 
+    });
+    [...clients.web, ...clients.mobile].forEach(c => {
+      if (c.readyState === WebSocket.OPEN) {
+        c.send(message);
+        console.log(`📢 Liste employés actifs diffusée à ${c.clientType}: ${rows.length} employés`);
+      }
+    });
+  } catch (err) {
+    console.error('❌ Broadcast active employees error:', err.message);
   }
 }
 
@@ -544,6 +568,7 @@ app.post('/api/employees', async (req, res) => {
       [id, nom, prenom, type || 'employe', 0, Date.now(), email, telephone]
     );
     res.json({ success: true, id, message: 'Employé ajouté' });
+    await broadcastActiveEmployees();
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
