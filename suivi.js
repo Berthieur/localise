@@ -39,7 +39,6 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Dossier public
 const publicDir = path.join(__dirname, 'public');
 if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir);
 app.use(express.static(publicDir));
@@ -113,14 +112,14 @@ async function initDatabase() {
       )
     `);
 
-    // Vérifier si les données de test existent
     const { rows } = await pool.query('SELECT COUNT(*) as count FROM employees');
     if (rows[0].count == 0) {
       console.log('📝 Ajout données test...');
       const testData = [
-        ['emp-2', 'Rakoto', 'Jean', 'employe', 0, Date.now()],
-        ['emp-3', 'Rasoa', 'Marie', 'manager', 0, Date.now()],
-        ['emp-4', 'info', 'Spray', 'employe', 0, Date.now()]
+        ['emp-1', 'Rakoto', 'Jean', 'employe', 0, Date.now()],
+        ['emp-2', 'Rasoa', 'Marie', 'manager', 0, Date.now()],
+        ['emp-3', 'info', 'Spray', 'employe', 0, Date.now()],
+        ['49876b20-faa0-4ad8-87eb-acace9f4e0ff', 'tero', 'fun', 'employe', 1, Date.now()]
       ];
       for (const emp of testData) {
         await pool.query(
@@ -141,11 +140,9 @@ const clients = { web: new Set(), esp32: new Set(), mobile: new Set() };
 
 // ================= CONNEXIONS WEBSOCKET =================
 wss.on('connection', (ws, req) => {
-  console.log(`🔌 Nouvelle connexion depuis ${req.socket.remoteAddress}`);
   const url = new URL(req.url, `http://${req.headers.host}`);
   const clientType = url.searchParams.get('type') || 'web';
-  console.log(`Client type: ${clientType}`);
-  console.log(`🔌 ${clientType} connecté (Total: ${wss.clients.size}, Web: ${clients.web.size}, ESP32: ${clients.esp32.size}, Mobile: ${clients.mobile.size})`);
+  console.log(`🔌 Nouvelle connexion depuis ${req.socket.remoteAddress}:${req.socket.remotePort} (${clientType})`);
   
   ws.clientType = clientType;
   ws.isAlive = true;
@@ -170,7 +167,7 @@ wss.on('connection', (ws, req) => {
   ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message);
-      console.log(`📥 Message reçu de ${clientType}:`, data);
+      console.log(`📥 ${clientType}: ${data.type}`, JSON.stringify(data));
       await handleWebSocketMessage(ws, data);
     } catch (error) {
       console.error('❌ Parse error:', error.message);
@@ -178,19 +175,19 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    console.log(`🔌 ${clientType} déconnecté (Restant: ${wss.clients.size - 1}, Web: ${clients.web.size - 1}, ESP32: ${clients.esp32.size}, Mobile: ${clients.mobile.size})`);
+    console.log(`🔌 ${clientType} déconnecté (Total: ${wss.clients.size - 1})`);
     clients.esp32.delete(ws);
     clients.web.delete(ws);
     clients.mobile.delete(ws);
   });
 
   ws.on('error', (error) => {
-    console.error('❌ WS error:', error.message);
+    console.error(`❌ WS error (${clientType}):`, error.message);
   });
 });
 
 wss.on('error', (error) => {
-  console.error('❌ WebSocket server error:', error);
+  console.error('❌ WebSocket server error:', error.message, error.stack);
 });
 
 // Heartbeat
@@ -276,6 +273,8 @@ async function handleRSSIData(data) {
       );
       
       console.log(`📝 RSSI: ${employee.prenom} ${employee.nom} = ${rssi} dBm`);
+      const distance = rssiToDistance(rssi);
+      console.log(`📏 RSSI: ${rssi} dBm, txPower: -59, n: 2.0, Distance: ${distance.toFixed(2)}m`);
       await calculatePosition(employee.id);
     } catch (err) {
       console.error('❌ DB error:', err.message);
@@ -296,11 +295,6 @@ async function calculatePosition(employeeId) {
       [employeeId, threshold]
     );
 
-    if (measurements.length === 0) {
-      console.log(`⚠️ Aucune mesure récente pour ${employeeId}`);
-      return;
-    }
-    
     console.log(`📊 ${measurements.length} mesures pour triangulation:`);
     
     const anchorData = {};
@@ -321,20 +315,19 @@ async function calculatePosition(employeeId) {
     
     if (anchors.length >= 3) {
       const position = trilateration(anchors);
-      console.log(`📍 Position: (${position.x.toFixed(2)}, ${position.y.toFixed(2)})`);
+      console.log(`📍 Trilatération calculée: (${position.x.toFixed(2)}, ${position.y.toFixed(2)})`);
       await updatePosition(employeeId, position);
     } else {
       console.log(`⚠️ Pas assez d'ancres: ${anchors.length}/3`);
       const anchor = anchors[0] || { x: 0, y: 0 };
-      const position = { x: anchor.x, y: anchor.y };
-      await updatePosition(employeeId, position);
+      await updatePosition(employeeId, { x: anchor.x, y: anchor.y });
     }
   } catch (err) {
     console.error('❌ Calc error:', err.message);
   }
 }
 
-// Mise à jour de la position
+// ================= AUTRES FONCTIONS =================
 async function updatePosition(employeeId, position) {
   try {
     await pool.query(
@@ -350,13 +343,11 @@ async function updatePosition(employeeId, position) {
   }
 }
 
-// Conversion RSSI → Distance
 function rssiToDistance(rssi, txPower = -59, n = 2.0) {
   if (rssi === 0) return -1.0;
   return Math.pow(10, (txPower - rssi) / (10 * n));
 }
 
-// Trilatération
 function trilateration(anchors) {
   anchors.sort((a, b) => a.distance - b.distance);
   const [a1, a2, a3] = anchors.slice(0, 3);
@@ -384,15 +375,10 @@ function trilateration(anchors) {
   };
 }
 
-// Diffuser position
 async function broadcastPosition(employeeId, position) {
   try {
-    console.log(`📢 Tentative de diffusion à ${clients.web.size} clients web et ${clients.mobile.size} clients mobile`);
     const { rows } = await pool.query(`SELECT * FROM employees WHERE id = $1`, [employeeId]);
-    if (rows.length === 0) {
-      console.error('❌ Broadcast error: Employé non trouvé');
-      return;
-    }
+    if (rows.length === 0) return;
     
     const employee = rows[0];
     const message = JSON.stringify({ 
@@ -405,19 +391,13 @@ async function broadcastPosition(employeeId, position) {
       if (c.readyState === WebSocket.OPEN) {
         c.send(message);
         console.log(`📢 Position diffusée à ${c.clientType}: ${employee.prenom} ${employee.nom}`);
-      } else {
-        console.log(`⚠️ Client ${c.clientType} non ouvert`);
       }
     });
-    if (clients.web.size === 0 && clients.mobile.size === 0) {
-      console.log('⚠️ Aucun client connecté pour la diffusion');
-    }
   } catch (err) {
     console.error('❌ Broadcast error:', err.message);
   }
 }
 
-// ================= QR & POINTAGE =================
 async function handleQRScan(data) {
   const { qr_code } = data;
   
@@ -449,7 +429,6 @@ async function handleQRScan(data) {
       message: `${employee.prenom} ${employee.nom} est ${pointageType === 'ENTREE' ? 'entré' : 'sorti'}`,
       employeeId: employee.id
     });
-    // Envoyer la liste mise à jour des employés actifs
     await broadcastActiveEmployees();
   } catch (err) {
     console.error('❌ QR scan error:', err.message);
@@ -467,7 +446,6 @@ async function handlePointage(data) {
       [pointageId, employeeId, employeeName, type, timestamp, date]
     );
     broadcast('pointage_recorded', { pointageId, employeeId, type, timestamp });
-    // Envoyer la liste mise à jour des employés actifs
     await broadcastActiveEmployees();
   } catch (err) {
     console.error('❌ Pointage error:', err.message);
