@@ -500,9 +500,6 @@ function broadcast(type, data) {
 // ================= ROUTES API =================
 app.get('/', (req, res) => {
   const indexPath = path.join(publicDir, 'index.html');
-  if (!fs.existsSync(indexPath)) {
-    fs.writeFileSync(indexPath, '<h1>🛰️ Serveur Suivi Temps Réel</h1><p>WebSocket actif</p>', 'utf-8');
-  }
   res.sendFile(indexPath);
 });
 
