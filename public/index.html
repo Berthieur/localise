@@ -381,7 +381,9 @@
 
   <script>
     // Configuration
-    const WS_URL = 'ws://localhost:3000/?type=web';
+    const WS_URL = window.location.hostname.includes('localhost') 
+      ? 'ws://localhost:3000/?type=web'
+      : 'wss://localise.onrender.com/?type=web';
     const MAP_WIDTH = 20; // mètres
     const MAP_HEIGHT = 15; // mètres
 
@@ -395,7 +397,7 @@
     const anchors = [
       { id: 1, x: 0, y: 0 },
       { id: 2, x: 20, y: 0 },
-      { id: 3, x: 10, y: 15 }
+      { id: 3, x: 5.8, y: 4.8 }
     ];
 
     // Connexion WebSocket
@@ -421,9 +423,10 @@
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          console.log('📥 Message reçu:', data);
           handleMessage(data);
         } catch (error) {
-          console.error('Erreur parsing message:', error);
+          console.error('❌ Erreur parsing message:', error);
         }
       };
     }
@@ -445,7 +448,6 @@
           break;
 
         case 'heartbeat':
-          // Répondre au heartbeat
           ws.send(JSON.stringify({ type: 'pong' }));
           break;
 
@@ -458,7 +460,7 @@
     // Demander la liste des employés actifs
     function requestActiveEmployees() {
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'get_active_employees' }));
+        ws.send(JSON.stringify({ type: 'get_active_employees', timestamp: Date.now() }));
       }
     }
 
@@ -478,7 +480,11 @@
     function updateEmployeesList(employeeList) {
       employees.clear();
       employeeList.forEach(emp => {
-        employees.set(emp.id, emp);
+        employees.set(emp.id, {
+          ...emp,
+          last_position_x: parseFloat(emp.last_position_x),
+          last_position_y: parseFloat(emp.last_position_y)
+        });
       });
 
       renderEmployeesList();
@@ -488,7 +494,11 @@
 
     // Mettre à jour la position d'un employé
     function updateEmployeePosition(employee) {
-      employees.set(employee.id, employee);
+      employees.set(employee.id, {
+        ...employee,
+        last_position_x: parseFloat(employee.last_position_x),
+        last_position_y: parseFloat(employee.last_position_y)
+      });
       renderMap();
       updateStats();
     }
@@ -506,11 +516,14 @@
       employees.forEach(emp => {
         const item = document.createElement('div');
         item.className = 'employee-item';
+        const position = (emp.last_position_x != null && emp.last_position_y != null)
+          ? `(${emp.last_position_x.toFixed(2)}, ${emp.last_position_y.toFixed(2)})`
+          : 'Inconnue';
         item.innerHTML = `
           <div class="employee-avatar">${emp.prenom[0]}${emp.nom[0]}</div>
           <div class="employee-info">
             <div class="employee-name">${emp.prenom} ${emp.nom}</div>
-            <div class="employee-type">${emp.type || 'N/A'}</div>
+            <div class="employee-type">${emp.type || 'N/A'} | ${position}</div>
           </div>
           <div class="employee-status"></div>
         `;
@@ -523,10 +536,8 @@
       const map = document.getElementById('map');
       const mapRect = map.getBoundingClientRect();
       
-      // Nettoyer les marqueurs existants
       map.querySelectorAll('.employee-marker, .anchor').forEach(el => el.remove());
 
-      // Afficher les ancres
       anchors.forEach(anchor => {
         const anchorEl = document.createElement('div');
         anchorEl.className = 'anchor';
@@ -537,7 +548,6 @@
         map.appendChild(anchorEl);
       });
 
-      // Afficher les employés
       employees.forEach(emp => {
         if (emp.last_position_x != null && emp.last_position_y != null) {
           const marker = document.createElement('div');
@@ -547,11 +557,10 @@
           const x = (emp.last_position_x / MAP_WIDTH) * 100;
           const y = (emp.last_position_y / MAP_HEIGHT) * 100;
           
-          marker.style.left = `${x}%`;
-          marker.style.top = `${y}%`;
+          marker.style.left = `${Math.max(0, Math.min(100, x))}%`;
+          marker.style.top = `${Math.max(0, Math.min(100, y))}%`;
           marker.style.transform = 'translate(-50%, -50%)';
           
-          // Tooltip au survol
           marker.addEventListener('mouseenter', (e) => {
             showTooltip(e, emp);
           });
@@ -574,8 +583,8 @@
         Position: (${employee.last_position_x?.toFixed(2)}, ${employee.last_position_y?.toFixed(2)})<br>
         Type: ${employee.type || 'N/A'}
       `;
-      tooltip.style.left = event.clientX + 'px';
-      tooltip.style.top = (event.clientY - 80) + 'px';
+      tooltip.style.left = `${event.clientX + 10}px`;
+      tooltip.style.top = `${event.clientY - 80}px`;
     }
 
     // Masquer le tooltip
@@ -591,9 +600,8 @@
       document.getElementById('activeEmployees').textContent = activeEmp;
       document.getElementById('activeCount').textContent = activeEmp;
       
-      // Calcul du taux de mise à jour
       const now = Date.now();
-      const elapsed = (now - lastUpdateTime) / 60000; // minutes
+      const elapsed = (now - lastUpdateTime) / 60000;
       if (elapsed > 0) {
         const rate = Math.round(updateCount / elapsed);
         document.getElementById('updateRate').textContent = rate;
@@ -610,7 +618,7 @@
       const map = document.getElementById('map');
       map.style.backgroundImage = map.style.backgroundImage ? '' : 
         'linear-gradient(#e0e0e0 1px, transparent 1px), linear-gradient(90deg, #e0e0e0 1px, transparent 1px)';
-      map.style.backgroundSize = map.style.backgroundSize ? '' : '50px 50px';
+      map.style.backgroundSize = map.style.backgroundImage ? '' : '50px 50px';
     }
 
     // Notification
@@ -621,7 +629,7 @@
     // Initialisation
     connectWebSocket();
     setInterval(updateStats, 1000);
-    setInterval(requestActiveEmployees, 10000); // Rafraîchir toutes les 10s
+    setInterval(requestActiveEmployees, 10000);
   </script>
 </body>
 </html>
