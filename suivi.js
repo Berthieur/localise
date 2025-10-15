@@ -146,7 +146,6 @@ function trilaterate(p1, r1, p2, r2, p3, r3) {
 
   const denom = E * A - B * D;
   if (Math.abs(denom) < 0.0001) return null;
-
   const x = (C * E - F * B) / denom;
   const y = (C * D - A * F) / denom;
 
