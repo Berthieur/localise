@@ -15,7 +15,7 @@ const server = http.createServer(app);
 // Stocker les positions des badges
 let badges = [];
 
-// Créer le serveur WebSocket
+// === Créer le serveur WebSocket ===
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws, req) => {
@@ -60,7 +60,7 @@ wss.on('connection', (ws, req) => {
         ws.isWebClient = true;
         console.log('🌐 Client web connecté');
 
-        // Envoyer les positions actuelles
+        // Envoyer les positions actuelles immédiatement
         ws.send(JSON.stringify({
           type: 'positions',
           badges: badges
